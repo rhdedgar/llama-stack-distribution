@@ -54,17 +54,19 @@ function start_and_wait_for_llama_stack_container {
   echo "Started Llama Stack container..."
 
   # Wait for llama stack to be ready by doing a health check
+  # Extended timeout for ARM64/QEMU emulation (300 seconds)
   echo "Waiting for Llama Stack server..."
-  for i in {1..60}; do
-    echo "Attempt $i to connect to Llama Stack..."
-    resp=$(curl -fsS $LLAMA_STACK_BASE_URL/v1/health)
+  max_attempts=300
+  for i in $(seq 1 $max_attempts); do
+    echo "Attempt $i/$max_attempts to connect to Llama Stack..."
+    resp=$(curl -fsS $LLAMA_STACK_BASE_URL/v1/health 2>/dev/null || echo "")
     if [ "$resp" == '{"status":"OK"}' ]; then
       echo "Llama Stack server is up!"
       return
     fi
     sleep 1
   done
-  echo "Llama Stack server failed to start :("
+  echo "Llama Stack server failed to start after ${max_attempts}s :("
   echo "Container logs:"
   docker logs llama-stack || true
   exit 1
@@ -111,8 +113,8 @@ function test_postgres_tables_exist {
   # Expected tables created by llama-stack
   expected_tables=("llamastack_kvstore" "inference_store")
 
-  # Retry for up to 10 seconds for tables to be created
-  for i in {1..10}; do
+  # Retry for up to 30 seconds for tables to be created (extended for ARM64/QEMU)
+  for i in {1..30}; do
     tables=$(docker exec postgres psql -U llamastack -d llamastack -t -c "SELECT tablename FROM pg_tables WHERE schemaname = 'public';" 2>/dev/null | tr -d ' ' | tr '\n' ' ')
     all_found=true
     for table in "${expected_tables[@]}"; do
@@ -130,7 +132,7 @@ function test_postgres_tables_exist {
     sleep 1
   done
 
-  echo "===> PostgreSQL tables not created after 10s :("
+  echo "===> PostgreSQL tables not created after 30s :("
   echo "Expected tables: ${expected_tables[*]}"
   echo "Available tables: $tables"
   docker exec postgres psql -U llamastack -d llamastack -c "\dt" || true
@@ -140,9 +142,9 @@ function test_postgres_tables_exist {
 function test_postgres_populated {
   echo "===> Verifying PostgreSQL database has been populated..."
 
-  # Check that chat_completions table has data (retry for up to 10 seconds)
+  # Check that inference_store table has data (retry for up to 30 seconds for ARM64/QEMU)
   echo "Waiting for inference_store table to be populated..."
-  for i in {1..10}; do
+  for i in {1..30}; do
     inference_count=$(docker exec postgres psql -U llamastack -d llamastack -t -c "SELECT COUNT(*) FROM inference_store;" 2>/dev/null | tr -d ' ')
     if [ -n "$inference_count" ] && [ "$inference_count" -gt 0 ]; then
       echo "===> inference_store table has $inference_count record(s)"
@@ -152,7 +154,7 @@ function test_postgres_populated {
     sleep 1
   done
   if [ -z "$inference_count" ] || [ "$inference_count" -eq 0 ]; then
-    echo "===> PostgreSQL inference_store table is empty or doesn't exist after 10s :("
+    echo "===> PostgreSQL inference_store table is empty or doesn't exist after 30s :("
     echo "Tables in database:"
     docker exec postgres psql -U llamastack -d llamastack -c "\dt" || true
     echo "inference_store table contents:"

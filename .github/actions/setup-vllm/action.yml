@@ -6,11 +6,12 @@ runs:
     - name: Start VLLM
       shell: bash
       run: |
-        # Start vllm container
+        # Start vllm container (automatically pulls correct architecture via QEMU)
         docker run -d \
           --name vllm \
           --privileged=true \
           --net=host \
+          --platform linux/amd64 \
           quay.io/higginsd/vllm-cpu:65393ee064-qwen3 \
           --host 0.0.0.0 \
           --port 8000 \
@@ -20,9 +21,9 @@ runs:
           --served-model-name Qwen/Qwen3-0.6B \
           --max-model-len 8192
 
-          # Wait for vllm to be ready
+          # Wait for vllm to be ready (extended timeout for ARM64/QEMU emulation)
           echo "Waiting for vllm to be ready..."
-          timeout 900 bash -c 'until curl -fsS http://localhost:8000/health >/dev/null; do
+          timeout 1800 bash -c 'until curl -fsS http://localhost:8000/health >/dev/null; do
             echo "Waiting for vllm..."
             sleep 5
           done'
