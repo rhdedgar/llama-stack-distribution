@@ -57,7 +57,7 @@ jobs:
       LLAMA_STACK_COMMIT_SHA: ${{ github.event.inputs.llama_stack_commit_sha || 'main' }}
     strategy:
       matrix:
-        platform: [linux/amd64] # Build AMD64 for testing (load: true only works for single platform)
+        platform: [linux/amd64, linux/arm64] # Build and test both architectures (QEMU enables ARM64 testing on AMD64 runners)
     permissions:
       id-token: write # for Google Cloud authentication
       contents: read
@@ -95,7 +95,7 @@ jobs:
           python3 distribution/build.py
           sed -i '/^RUN pip install --no-cache llama-stack==/d' distribution/Containerfile
 
-      - name: Build image (AMD64 for testing)
+      - name: Build image for testing (${{ matrix.platform }})
         id: build
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
@@ -104,20 +104,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           push: false
           tags: ${{ env.IMAGE_NAME }}:${{ contains(fromJSON('["workflow_dispatch", "schedule"]'), github.event_name) && format('source-{0}-{1}', env.LLAMA_STACK_COMMIT_SHA, github.sha) || github.sha }}
-          load: true  # needed to load for smoke test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build image (ARM64 verification)
-        id: build-arm64
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
-        with:
-          context: .
-          file: distribution/Containerfile
-          platforms: linux/arm64
-          push: false
-          tags: ${{ env.IMAGE_NAME }}:${{ contains(fromJSON('["workflow_dispatch", "schedule"]'), github.event_name) && format('source-{0}-{1}-arm64', env.LLAMA_STACK_COMMIT_SHA, github.sha) || format('{0}-arm64', github.sha) }}
-          load: false  # Only verify it builds, don't load (can't load ARM64 on AMD64 runner)
+          load: true  # QEMU enables loading ARM64 images on AMD64 runners for testing
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -150,12 +137,14 @@ jobs:
         if: github.event_name != 'workflow_dispatch'
         id: smoke-test
         shell: bash
+        timeout-minutes: ${{ matrix.platform == 'linux/arm64' && 60 || 30 }}
         run: ./tests/smoke.sh
 
       - name: Integration tests
         if: github.event_name != 'workflow_dispatch'
         id: integration-tests
         shell: bash
+        timeout-minutes: ${{ matrix.platform == 'linux/arm64' && 90 || 45 }}
         run: ./tests/run_integration_tests.sh
 
       - name: Gather logs and debugging information
@@ -194,7 +183,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: ci-logs-${{ github.sha }}
+          name: ci-logs-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}-${{ github.sha }}
           path: logs/
           retention-days: 7
 
@@ -206,7 +195,7 @@ jobs:
 
       - name: Log in to Quay.io
         id: login
-        if: contains(fromJSON('["push", "workflow_dispatch"]'), github.event_name)
+        if: contains(fromJSON('["push", "workflow_dispatch"]'), github.event_name) && matrix.platform == 'linux/amd64'
         uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -215,7 +204,7 @@ jobs:
 
       - name: Publish multi-arch image to Quay.io
         id: publish
-        if: contains(fromJSON('["push", "workflow_dispatch"]'), github.event_name)
+        if: contains(fromJSON('["push", "workflow_dispatch"]'), github.event_name) && matrix.platform == 'linux/amd64'
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: .
