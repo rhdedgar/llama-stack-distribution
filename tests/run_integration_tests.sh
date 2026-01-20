@@ -77,10 +77,36 @@ function run_integration_tests() {
     # shellcheck source=/dev/null
     source .venv/bin/activate
     uv pip install llama-stack-client
+
+    # Create conftest.py to patch llama-stack-client timeout for ARM64/QEMU emulation
+    # The default httpx timeout is 5s which is way too short for emulated environments
+    cat > tests/integration/inference/conftest_timeout.py << 'EOF'
+import os
+import pytest
+from llama_stack_client import LlamaStackClient
+
+# Store the original __init__ method
+_original_init = LlamaStackClient.__init__
+
+def patched_init(self, *args, **kwargs):
+    # Set a much longer timeout for ARM64/QEMU emulation (default is 5 seconds)
+    # We use 600 seconds (10 minutes) to accommodate very slow embedding operations
+    if 'timeout' not in kwargs:
+        kwargs['timeout'] = 600.0
+    return _original_init(self, *args, **kwargs)
+
+# Monkey patch the LlamaStackClient to use extended timeout
+LlamaStackClient.__init__ = patched_init
+EOF
+
+    # Import the timeout patch before running tests
+    export PYTHONPATH="$WORK_DIR/tests/integration/inference:${PYTHONPATH:-}"
+
     uv run pytest -s -v tests/integration/inference/ \
         --stack-config=server:"$STACK_CONFIG_PATH" \
         --text-model="$model" \
         --embedding-model="$EMBEDDING_MODEL" \
+        -p conftest_timeout \
         -k "not ($SKIP_TESTS)"
 }
 
