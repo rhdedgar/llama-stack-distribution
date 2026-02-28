@@ -88,6 +88,7 @@ jobs:
           fi
 
       - name: Install uv
+        if: matrix.arch == 'amd64' || contains(fromJSON('["workflow_dispatch", "schedule"]'), github.event_name)
         uses: astral-sh/setup-uv@803947b9bd8e9f986429fa0c5a41c367cd732b41 # v7.2.1
         with:
           python-version: 3.12
